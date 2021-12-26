@@ -9,6 +9,7 @@
 #include <Adafruit_INA219.h>
 #include <SD.h>
 #include <time.h>
+#include "EEPROM.h"
 
 #define GPSSerial Serial2
 #define GPSECHO false
@@ -97,8 +98,15 @@ bme.begin(0x76);                                          //begin bme temperatur
     Serial.println("File already exists");  
   }
   file.close();
-  dataMessage = "PM1.0, PM2.5, PM10, Temperature, Humidity, Pressure, Acc-X, Acc-Y, Acc-Z, CO2, Time, Date, Fix, Quality, Voltage, Current, Power, Location, Location, Speed (knots), Angle, Altidude, Satellites \r\n"; 
-  appendFile(SD, "/data.csv", dataMessage.c_str());
+  Serial.println("EEPROM: ");
+  Serial.println(String(EEPROM.read(0)));
+  if(EEPROM.read(0) == 0){ //if EEPROM adress 0 has value 1 indicates that ESP was manually reset due to sensor checksum failure (line 247) and therefore headline should not be written in csv again
+    dataMessage = "PM1.0, PM2.5, PM10, Temperature, Humidity, Pressure, Acc-X, Acc-Y, Acc-Z, CO2, Time, Date, Fix, Quality, Voltage, Current, Power, Location, Location, Speed (knots), Angle, Altidude, Satellites \r\n"; 
+    appendFile(SD, "/data.csv", dataMessage.c_str());
+    Serial.println("New Measurement \r\n");
+  }
+  
+  EEPROM.write(0, 0); //write value 0 in EEPROM adress 0 
 }
 
 
@@ -234,8 +242,10 @@ boolean readPMSdata(Stream *s) {
   memcpy((void *)&data, (void *)buffer_u16, 30);
  
   if (sum != data.checksum) {
-    Serial.println("Checksum failure");    
-    ESP.restart();
+    Serial.println("Checksum failure");
+    EEPROM.write(0, 1);        //save value 1 to EEPROM adress 0 for later identification of manually reset   
+    EEPROM.commit(); 
+    ESP.restart();            //manually reset ESP because of Checksum failure
     
     return false;
   }
