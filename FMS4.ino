@@ -6,6 +6,7 @@
 #include <Adafruit_SCD30.h>
 #include <Adafruit_GPS.h>
 #include <SoftwareSerial.h>
+#include <Adafruit_INA219.h>
 #include <SD.h>
 #include <time.h>
 
@@ -20,12 +21,14 @@
 Adafruit_BME280 bme;
 Adafruit_BNO055 bno = Adafruit_BNO055(55);
 Adafruit_SCD30  scd30;
+Adafruit_INA219 ina219;
 String temperature, humidity, pressure, carbondioxide, GPSString, nofix;
 String dataMessage;
 String val1;
 String val2;
 String val3;
 uint32_t timer = millis();
+uint32_t currentFrequency;
 bool GPSread = true;
 
 //Software/HardwareSerial configs
@@ -57,6 +60,13 @@ bme.begin(0x76);                                          //begin bme temperatur
   GPSSerial.begin(9600);
   GPS.sendCommand(PMTK_SET_NMEA_OUTPUT_RMCGGA);
   GPS.sendCommand(PMTK_SET_NMEA_UPDATE_1HZ);
+  
+  //begin current sensor
+  if (! ina219.begin()) {
+    Serial.println("Failed to find INA219 chip");
+    while (1) { delay(10); }
+  }
+  ina219.setCalibration_32V_1A();                     //set to lower range (higher precision on volts and amps)
 
 
   //setup SD
@@ -77,20 +87,28 @@ bme.begin(0x76);                                          //begin bme temperatur
   }
   // If the data.txt file doesn't exist
   // Create a file on the SD card and write the data labels
-  File file = SD.open("/data.txt");
+  File file = SD.open("/data.csv");
   if(!file) {
     Serial.println("File doens't exist");
     Serial.println("Creating file...");
-    writeFile(SD, "/data.txt", "Feinstaubmesssystem Messdaten \r\n");
+    writeFile(SD, "/data.csv", "Feinstaubmesssystem Messdaten \r\n");
   }
   else {
     Serial.println("File already exists");  
   }
   file.close();
+  dataMessage = "PM1.0, PM2.5, PM10, Temperature, Humidity, Pressure, Acc-X, Acc-Y, Acc-Z, CO2, Time, Date, Fix, Quality, Voltage, Current, Power, Location, Location, Speed (knots), Angle, Altidude, Satellites \r\n"; 
+  appendFile(SD, "/data.csv", dataMessage.c_str());
 }
 
 
 void loop() {
+
+  float shuntvoltage = 0;
+  float busvoltage = 0;
+  float current_mA = 0;
+  float loadvoltage = 0;
+  float power_mW = 0;
   /* Get a new sensor event */ 
   sensors_event_t event; 
 
@@ -102,6 +120,20 @@ void loop() {
     val2 = data.particles_25um;
     val3 = data.particles_100um;
 
+    //read current sensor
+    shuntvoltage = ina219.getShuntVoltage_mV();
+    busvoltage = ina219.getBusVoltage_V();
+    current_mA = ina219.getCurrent_mA();
+    power_mW = ina219.getPower_mW();
+    loadvoltage = busvoltage + (shuntvoltage / 1000);
+
+//    Serial.print("Bus Voltage:   "); Serial.print(busvoltage); Serial.println(" V");
+//    Serial.print("Shunt Voltage: "); Serial.print(shuntvoltage); Serial.println(" mV");
+//    Serial.print("Load Voltage:  "); Serial.print(loadvoltage); Serial.println(" V");
+//    Serial.print("Current:       "); Serial.print(current_mA); Serial.println(" mA");
+//    Serial.print("Power:         "); Serial.print(power_mW); Serial.println(" mW");
+//    Serial.println("");
+
     //read all the other sensors
     bno.getEvent(&event);
     temperature = bme.readTemperature();
@@ -110,6 +142,8 @@ void loop() {
     if (!scd30.read()){ Serial.println("Error reading sensor data"); return; }
     carbondioxide = scd30.CO2;
 
+    
+    
     while(GPSread)
     {
       // read data from the GPS in the 'main loop'
@@ -119,71 +153,36 @@ void loop() {
         // a tricky thing here is if we print the NMEA sentence, or data
         // we end up not listening and catching other sentences!
         // so be very wary if using OUTPUT_ALLDATA and trying to print out data
-        Serial.print(GPS.lastNMEA()); // this also sets the newNMEAreceived() flag to false
+        //Serial.print(GPS.lastNMEA()); // this also sets the newNMEAreceived() flag to false
         if (!GPS.parse(GPS.lastNMEA())) // this also sets the newNMEAreceived() flag to false
           return; // we can fail to parse a sentence in which case we should just wait for another
       }
           // measure for approximately 2 seconds before printing status
       if (millis() - timer > 7000) {
         timer = millis(); // reset the timer
-//        Serial.print("\nTime: ");
-//        if (GPS.hour < 10) { Serial.print('0'); }
-//        Serial.print(GPS.hour, DEC); Serial.print(':');
-//        if (GPS.minute < 10) { Serial.print('0'); }
-//        Serial.print(GPS.minute, DEC); Serial.print(':');
-//        if (GPS.seconds < 10) { Serial.print('0'); }
-//        Serial.print(GPS.seconds, DEC); Serial.print('.');
-//        if (GPS.milliseconds < 10) {
-//          Serial.print("00");
-//        } else if (GPS.milliseconds > 9 && GPS.milliseconds < 100) {
-//          Serial.print("0");
-//        }
-//        Serial.println(GPS.milliseconds);
-//        Serial.print("Date: ");
-//        Serial.print(GPS.day, DEC); Serial.print('/');
-//        Serial.print(GPS.month, DEC); Serial.print("/20");
-//        Serial.println(GPS.year, DEC);
-//        Serial.print("Fix: "); Serial.print((int)GPS.fix);
-//        Serial.print(" quality: "); Serial.println((int)GPS.fixquality);
-        
-        dataMessage = "Time: " + String(GPS.hour) + ":" + String(GPS.minute) + ":" + String(GPS.seconds) + ":" + String(GPS.milliseconds) + "\r\n" + 
-                      "Date: " + String(GPS.day) + ":" + String(GPS.month) + ":" + String(GPS.year) + "\r\n" + 
-                      "Fix: " + String(GPS.fix) + "\r\n" + 
-                      "Quality: " + String(GPS.fixquality) + "\r\n";
-        Serial.println(dataMessage);
-        appendFile(SD, "/data.txt", dataMessage.c_str());
-        if (GPS.fix) {
-          Serial.print("Location: ");
-          Serial.print(GPS.latitude, 4); Serial.print(GPS.lat);
-          Serial.print(", ");
-          Serial.print(GPS.longitude, 4); Serial.println(GPS.lon);
-          Serial.print("Speed (knots): "); Serial.println(GPS.speed);
-          Serial.print("Angle: "); Serial.println(GPS.angle);
-          Serial.print("Altitude: "); Serial.println(GPS.altitude);
-          Serial.print("Satellites: "); Serial.println((int)GPS.satellites);
 
-          dataMessage = "Location: " + String(GPS.latitude) + String(GPS.lat) + ", " + String(GPS.longitude) + String(GPS.lon) + "\r\n" + 
-                        "Speed: " + String(GPS.speed) + "\r\n" + 
-                        "Angle: " + String(GPS.angle) + "\r\n" + 
-                        "Altitude: " + String(GPS.altitude) + "\r\n" + 
-                        "Satellites: " + String(GPS.satellites) + "\r\n";
-          Serial.println(dataMessage);
-          appendFile(SD, "/data.txt", dataMessage.c_str());           
+        //"PM1.0, PM2.5, PM10, Temperature, Humidity, Pressure, Acc-X, Acc-Y, Acc-Z, CO2, Time, Date, Fix, Quality, Location, Location, Speed (knots), Angle, Altidude, Satellites \r\n"; 
+        dataMessage = String(val1) + ", " + String(val2) + ", " + String(val3) + ", " + String(temperature) + ", " + String(humidity) + ", " + String(pressure) + ", " + 
+        String(event.orientation.x) + ", " + String(event.orientation.y) + ", " + String(event.orientation.z) + ", " + String(carbondioxide) + ", " + 
+        String(GPS.hour) + ":" + String(GPS.minute) + ":" + String(GPS.seconds) + ":" + String(GPS.milliseconds) + ", " + String(GPS.day) + ":" + String(GPS.month) + ":" + String(GPS.year) + ", " + 
+        String(GPS.fix) + ", " + String(GPS.fixquality) + ", " + String(loadvoltage) + ", " + String(current_mA) + ", " + String(power_mW);
+  
+        if (GPS.fix) {
+
+
+          dataMessage = dataMessage + ", " + String(GPS.latitude) + String(GPS.lat) + ", " + String(GPS.longitude) + String(GPS.lon) + ", " +
+                        String(GPS.speed) + ", " +
+                        String(GPS.angle) + ", " + 
+                        String(GPS.altitude) + ", " + 
+                        String(GPS.satellites);
+                   
         }
+        dataMessage = dataMessage + "\r\n";
+        Serial.println(dataMessage);
+        appendFile(SD, "/data.csv", dataMessage.c_str());  
         GPSread = false;
       }
-      }
-
-    
-    /* Save readings to SD Card*/
-     dataMessage = 
-                "PM1.0: " + String(val1) + ", " + "PM2.5: " + String(val2) + ", " + "PM10: " + String(val3) + "\r\n" + 
-                "Temperature: " + String(temperature) + ", " + "Humidity: " + String(humidity) + ", " + "Pressure: " + String(pressure) + "," + "\r\n" +
-                "Acc-X: " + String(event.orientation.x) + ", " + "Acc-Y: " + String(event.orientation.y) + ", " + "Acc-Z: " + String(event.orientation.z) + "," + "\r\n" + 
-                "CO2: " + String(carbondioxide) + "\r\n" + "----------------------" + "\r\n";
-    Serial.print("Save data: ");
-    Serial.println(dataMessage);
-    appendFile(SD, "/data.txt", dataMessage.c_str());
+    }
 
     Serial.println("");
   }
@@ -235,7 +234,9 @@ boolean readPMSdata(Stream *s) {
   memcpy((void *)&data, (void *)buffer_u16, 30);
  
   if (sum != data.checksum) {
-    Serial.println("Checksum failure");
+    Serial.println("Checksum failure");    
+    ESP.restart();
+    
     return false;
   }
   // success!
