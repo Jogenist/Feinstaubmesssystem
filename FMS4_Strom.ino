@@ -17,6 +17,8 @@
 // Set GPSECHO to 'false' to turn off echoing the GPS data to the Serial console
 // Set to 'true' if you want to debug and listen to the raw GPS sentences
 #define GPSECHO false
+#define uS_TO_S_FACTOR 1000000  /* Conversion factor for micro seconds to seconds */
+#define TIME_TO_SLEEP  5        /* Time ESP32 will go to sleep (in seconds) */
 
 //declarations
 Adafruit_BME280 bme;
@@ -67,7 +69,8 @@ bme.begin(0x76);                                          //begin bme temperatur
     Serial.println("Failed to find INA219 chip");
     while (1) { delay(10); }
   }
-  ina219.setCalibration_32V_1A();                     //set to lower range (higher precision on volts and amps)
+  ina219.setCalibration_16V_400mA();
+  //ina219.setCalibration_32V_1A();                     //set to lower range (higher precision on volts and amps)
 
   //setup SD
   SD.begin(SD_CS);
@@ -128,70 +131,75 @@ void loop() {
   dataMessage = String(loadvoltage) + ", " + String(current_mA) + ", " + String(power_mW) + "\r\n";
   Serial.println(dataMessage);
   appendFile(SD, "/data.csv", dataMessage.c_str());
-
-  if (readPMSdata(&mySerial)) {
-    // reading data was successful!
-
-    //store pms data to variables
-    val1 = data.particles_10um;
-    val2 = data.particles_25um;
-    val3 = data.particles_100um;
-
-    //read current sensor
-    shuntvoltage = ina219.getShuntVoltage_mV();
-    busvoltage = ina219.getBusVoltage_V();
-    current_mA = ina219.getCurrent_mA();
-    power_mW = ina219.getPower_mW();
-    loadvoltage = busvoltage + (shuntvoltage / 1000);
-
-    //read all the other sensors
-    bno.getEvent(&event);
-    temperature = bme.readTemperature();
-    humidity = bme.readHumidity();
-    pressure = bme.readPressure() / 100.0F;
-    if (!scd30.read()){ Serial.println("Error reading sensor data"); return; }
-    carbondioxide = scd30.CO2;
-    
-    
-    while(GPSread)
-    {
-      // read data from the GPS in the 'main loop'
-      char c = GPS.read();
-      // if a sentence is received, we can check the checksum, parse it...
-      if (GPS.newNMEAreceived()) {
-        // a tricky thing here is if we print the NMEA sentence, or data
-        // we end up not listening and catching other sentences!
-        // so be very wary if using OUTPUT_ALLDATA and trying to print out data
-        //Serial.print(GPS.lastNMEA()); // this also sets the newNMEAreceived() flag to false
-        if (!GPS.parse(GPS.lastNMEA())) // this also sets the newNMEAreceived() flag to false
-          return; // we can fail to parse a sentence in which case we should just wait for another
-      }
-          // measure for approximately 2 seconds before printing status
-      if (millis() - timer > 7000) {
-        timer = millis(); // reset the timer
-
-        //"PM1.0, PM2.5, PM10, Temperature, Humidity, Pressure, Acc-X, Acc-Y, Acc-Z, CO2, Time, Date, Fix, Quality, Location, Location, Speed (knots), Angle, Altidude, Satellites \r\n"; 
-        dataMessage = String(val1) + ", " + String(val2) + ", " + String(val3) + ", " + String(temperature) + ", " + String(humidity) + ", " + String(pressure) + ", " + 
-        String(event.orientation.x) + ", " + String(event.orientation.y) + ", " + String(event.orientation.z) + ", " + String(carbondioxide) + ", " + 
-        String(GPS.hour) + ":" + String(GPS.minute) + ":" + String(GPS.seconds) + ":" + String(GPS.milliseconds) + ", " + String(GPS.day) + ":" + String(GPS.month) + ":" + String(GPS.year) + ", " + 
-        String(GPS.fix) + ", " + String(GPS.fixquality) + ", " + String(loadvoltage) + ", " + String(current_mA) + ", " + String(power_mW);
+  if(GPS.fix)
+  {
+    if (readPMSdata(&mySerial)) {
+      // reading data was successful!
   
-        if (GPS.fix) {
-          dataMessage = dataMessage + ", " + String(GPS.latitude) + String(GPS.lat) + ", " + String(GPS.longitude) + String(GPS.lon) + ", " +
-                        String(GPS.speed) + ", " +
-                        String(GPS.angle) + ", " + 
-                        String(GPS.altitude) + ", " + 
-                        String(GPS.satellites); 
+      //store pms data to variables
+      val1 = data.particles_10um;
+      val2 = data.particles_25um;
+      val3 = data.particles_100um;
+  
+      //read current sensor
+      shuntvoltage = ina219.getShuntVoltage_mV();
+      busvoltage = ina219.getBusVoltage_V();
+      current_mA = ina219.getCurrent_mA();
+      power_mW = ina219.getPower_mW();
+      loadvoltage = busvoltage + (shuntvoltage / 1000);
+  
+      //read all the other sensors
+      bno.getEvent(&event);
+      temperature = bme.readTemperature();
+      humidity = bme.readHumidity();
+      pressure = bme.readPressure() / 100.0F;
+      if (!scd30.read()){ Serial.println("Error reading sensor data"); return; }
+      carbondioxide = scd30.CO2;
+      
+      
+      while(GPSread)
+      {
+        // read data from the GPS in the 'main loop'
+        char c = GPS.read();
+        // if a sentence is received, we can check the checksum, parse it...
+        if (GPS.newNMEAreceived()) {
+          // a tricky thing here is if we print the NMEA sentence, or data
+          // we end up not listening and catching other sentences!
+          // so be very wary if using OUTPUT_ALLDATA and trying to print out data
+          //Serial.print(GPS.lastNMEA()); // this also sets the newNMEAreceived() flag to false
+          if (!GPS.parse(GPS.lastNMEA())) // this also sets the newNMEAreceived() flag to false
+            return; // we can fail to parse a sentence in which case we should just wait for another
         }
-//        dataMessage = dataMessage + "\r\n";
-//        Serial.println(dataMessage);
-//        appendFile(SD, "/data.csv", dataMessage.c_str());  
-        GPSread = false;
+            // measure for approximately 2 seconds before printing status
+        if (millis() - timer > 7000) {
+          timer = millis(); // reset the timer
+  
+          //"PM1.0, PM2.5, PM10, Temperature, Humidity, Pressure, Acc-X, Acc-Y, Acc-Z, CO2, Time, Date, Fix, Quality, Location, Location, Speed (knots), Angle, Altidude, Satellites \r\n"; 
+          dataMessage = String(val1) + ", " + String(val2) + ", " + String(val3) + ", " + String(temperature) + ", " + String(humidity) + ", " + String(pressure) + ", " + 
+          String(event.orientation.x) + ", " + String(event.orientation.y) + ", " + String(event.orientation.z) + ", " + String(carbondioxide) + ", " + 
+          String(GPS.hour) + ":" + String(GPS.minute) + ":" + String(GPS.seconds) + ":" + String(GPS.milliseconds) + ", " + String(GPS.day) + ":" + String(GPS.month) + ":" + String(GPS.year) + ", " + 
+          String(GPS.fix) + ", " + String(GPS.fixquality) + ", " + String(loadvoltage) + ", " + String(current_mA) + ", " + String(power_mW);
+    
+          if (GPS.fix) {
+            dataMessage = dataMessage + ", " + String(GPS.latitude) + String(GPS.lat) + ", " + String(GPS.longitude) + String(GPS.lon) + ", " +
+                          String(GPS.speed) + ", " +
+                          String(GPS.angle) + ", " + 
+                          String(GPS.altitude) + ", " + 
+                          String(GPS.satellites); 
+          }
+  //        dataMessage = dataMessage + "\r\n";
+  //        Serial.println(dataMessage);
+  //        appendFile(SD, "/data.csv", dataMessage.c_str());  
+          GPSread = false;
+        }
       }
+  
+      Serial.println("");
     }
-
-    Serial.println("");
   }
+  esp_sleep_enable_timer_wakeup(TIME_TO_SLEEP * uS_TO_S_FACTOR);
+  esp_deep_sleep_start();
+  Serial.println("sleeped for " + String(TIME_TO_SLEEP) + "seconds");
   GPSread = true;
 //  delay(500);
 }
